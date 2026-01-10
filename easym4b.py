@@ -3,12 +3,12 @@
 LibbyRip - Convert Libby audiobook downloads to M4B format with chapters
 
 Usage:
-    libbyrip.py <input_directory> [--output-name FILENAME]
-    libbyrip.py --help
+    easym4b.py <input_directory> [--output-name FILENAME]
+    easym4b.py --help
 
 Examples:
-    libbyrip.py "$HOME/Downloads/My Book"
-    libbyrip.py "$HOME/Downloads/My Book" --output-name "MyBook"
+    easym4b.py "$HOME/Downloads/My Book"
+    easym4b.py "$HOME/Downloads/My Book" --output-name "MyBook"
 """
 
 import os
@@ -280,8 +280,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  libbyrip.py "$HOME/Downloads/My Book"
-  libbyrip.py "$HOME/Downloads/My Book" --output-name "MyBook"
+  easym4b.py "$HOME/Downloads/My Book"
+  easym4b.py "$HOME/Downloads/My Book" --output-name "MyBook"
         """,
     )
 

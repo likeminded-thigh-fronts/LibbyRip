@@ -30,12 +30,12 @@ Rip your audiobooks from Libby. Powered by [FFmpeg.js](https://github.com/Psyche
 - Assumes files are named `Part X.mp3`.
 - `Lame tag CRC check failed` can be ignored; shown in the GUI log.
 
-## Convert to M4B (`libbyrip.py`)
+## Convert to M4B (`easym4b.py`)
 End-to-end conversion to a single M4B with embedded chapters.
 
 **Quick start**
 ```bash
-python3 libbyrip.py "/path/to/audiobook/directory"
+python3 easym4b.py "/path/to/audiobook/directory"
 ```
 Steps performed:
 1. Combine all `Part *.mp3` files into one MP3.
@@ -47,13 +47,13 @@ Steps performed:
 **Common options**
 ```bash
 # Use title from metadata
-python3 libbyrip.py "$HOME/Downloads/Book Title"
+python3 easym4b.py "$HOME/Downloads/Book Title"
 
 # Custom output name
-python3 libbyrip.py "$HOME/Downloads/Book Title" --output-name "CustomName"
+python3 easym4b.py "$HOME/Downloads/Book Title" --output-name "CustomName"
 
 # Keep intermediate files
-python3 libbyrip.py "$HOME/Downloads/Book Title" --keep-temp
+python3 easym4b.py "$HOME/Downloads/Book Title" --keep-temp
 ```
 
 **Requirements**

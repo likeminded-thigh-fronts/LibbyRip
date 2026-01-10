@@ -10,9 +10,9 @@ help:
 	@echo "  make clean            - Remove temporary files from downloads"
 	@echo ""
 	@echo "Direct usage:"
-	@echo "  python3 libbyrip.py <input_directory>"
-	@echo "  python3 libbyrip.py <input_directory> --output-name FILENAME"
-	@echo "  python3 libbyrip.py <input_directory> --keep-temp"
+	@echo "  python3 easym4b.py <input_directory>"
+	@echo "  python3 easym4b.py <input_directory> --output-name FILENAME"
+	@echo "  python3 easym4b.py <input_directory> --keep-temp"
 
 check_binaries:
 	@echo "Checking FFmpeg installation..."
