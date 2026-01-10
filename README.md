@@ -16,19 +16,18 @@ Rip your audiobooks from Libby. Powered by [FFmpeg.js](https://github.com/Psyche
 <a href='https://ko-fi.com/V7V81BFLAH' target='_blank'><img height='36' style='border:0px;height:36px;' src='https://storage.ko-fi.com/cdn/kofi6.png?v=6' border='0' alt='Buy Me a Coffee at ko-fi.com' /></a>
 
 **Requirements**
-- Python 3.x; install deps with `pip install -r requirements.txt`.
+- Python 3.x; - Tested on python 3.14
 - ffmpeg installed.
 - macOS users: install Xcode audio toolbox to enable the AAC_AT codec (faster, better quality).
 
 **What it does**
 - Reads `metadata/metadata.json` from the audiobook folder.
-- Embeds chapters and cover art into each part with `eyed3`.
+- Embeds chapters and cover art into each part with `ffmpeg`.
 - Sets ID3 tags (title, artist, album, track number).
 
 **Notes**
 - Audiobook folder must include `metadata/metadata.json` and cover art.
 - Assumes files are named `Part X.mp3`.
-- `Lame tag CRC check failed` can be ignored; shown in the GUI log.
 
 ## Convert to M4B (`easym4b.py`)
 End-to-end conversion to a single M4B with embedded chapters.
