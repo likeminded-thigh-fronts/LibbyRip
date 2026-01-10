@@ -20,7 +20,7 @@ outPath = path[:-4] + ".m4b"
 
 
 subprocess.run([
-    "ffmpeg", "-i", path, "-c:a", "aac", "-b:a", "128k", "-vn", "-map_metadata", "0", "-map_chapters", "0", "-f", "ipod", outPath
+    "ffmpeg", "-i", path, "-c:a", "aac", "-b:a", "64k", "-vn", "-map_metadata", "0", "-map_chapters", "0", "-f", "ipod", outPath
 
 ])
 
