@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import os, subprocess
+import os
+import subprocess
 
 try:
     subprocess.run(("ffmpeg", "-version"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
