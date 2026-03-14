@@ -272,7 +272,7 @@ class EasyM4BApp(QtWidgets.QWidget):
 
     def on_finished(self, result):
         if result:
-            self.logOutput.append(f"\nDone!")
+            self.logOutput.append("\nDone!")
         self.set_controls_enabled(True)
 
 
