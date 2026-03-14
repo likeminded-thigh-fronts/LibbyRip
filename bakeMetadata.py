@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
+"""Bake audiobook metadata into MP3 files using eyed3."""
+
 import sys
 import os
 import json
-import eyed3
 import mimetypes
 import argparse
 import logging
+
+import eyed3
 from eyed3.id3 import ID3_V2_4
 from PyQt5 import QtWidgets, QtCore
 
-# Custom logging handler to forward logs to the GUI status window.
+
 class GuiLogHandler(logging.Handler):
+    """Custom logging handler to forward logs to the GUI status window."""
     def __init__(self, callback):
         super().__init__()
         self.callback = callback
@@ -22,14 +26,19 @@ class GuiLogHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
-def bake_metadata(workingDir, progress_callback=None):
+def bake_metadata(working_dir, progress_callback=None):
+    """Bake metadata, cover art, and chapters into MP3 files."""
+    workingDir = working_dir
     if workingDir.startswith("'"):
         workingDir = workingDir[1:-1]
     # Sort the working list alphabetically
     workingList = sorted(os.listdir(workingDir))
 
     if "metadata" not in workingList:
-        error_msg = "ERROR: Working directory MUST contain a metadata directory. Remember to click the 'Export audiobook' button in the website!"
+        error_msg = (
+            "ERROR: Working directory MUST contain a metadata directory. "
+            "Remember to click the 'Export audiobook' button in the website!"
+        )
         if progress_callback:
             progress_callback(error_msg, 0)
         raise FileNotFoundError(error_msg)
@@ -96,8 +105,9 @@ def bake_metadata(workingDir, progress_callback=None):
                 current_offset = chap["offset"]
                 if current_offset <= prev_offset:
                     # Found overlapping chapter - report and exit
+                    metadata_path = os.path.join(workingDir, 'metadata', 'metadata.json')
                     error_parts = [
-                        f"ERROR: {os.path.join(workingDir, 'metadata', 'metadata.json')} has errors with overlapping chapter times.",
+                        f"ERROR: {metadata_path} has errors with overlapping chapter times.",
                         f"Look in chapters for spine: {spine_index}",
                         f"Chapter '{spine_chapters[i-1]['title']}' at offset: {spine_chapters[i-1]['offset']}",
                         f"Chapter '{chap['title']}' at offset: {current_offset}"
@@ -155,8 +165,8 @@ def bake_metadata(workingDir, progress_callback=None):
             progress = int((index + 1) * 100 / total)
             progress_callback(f"Baked: {file}", progress)
 
-# Worker class to run bake_metadata in a separate thread
 class Worker(QtCore.QObject):
+    """Worker to run bake_metadata in a separate thread."""
     progress = QtCore.pyqtSignal(str, int)
     finished = QtCore.pyqtSignal()
     error = QtCore.pyqtSignal(str)
@@ -166,6 +176,7 @@ class Worker(QtCore.QObject):
         self.path = path
 
     def run(self):
+        """Execute the metadata baking process."""
         try:
             bake_metadata(self.path, progress_callback=self.progress.emit)
         except Exception as e:
@@ -181,13 +192,17 @@ class Worker(QtCore.QObject):
 # -------- GUI SECTION --------
 
 class MetadataBakerApp(QtWidgets.QWidget):
+    """GUI application for baking audiobook metadata."""
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Bake Metadata")
         self.resize(500, 300)
+        self.thread = None
+        self.worker = None
         self.init_ui()
 
     def init_ui(self):
+        """Initialize the user interface."""
         layout = QtWidgets.QVBoxLayout()
 
         # Directory selection
@@ -220,11 +235,13 @@ class MetadataBakerApp(QtWidgets.QWidget):
         self.runBtn.clicked.connect(self.run_bake)
 
     def select_dir(self):
+        """Open directory picker dialog."""
         dir_path = QtWidgets.QFileDialog.getExistingDirectory(self, "Select Audiobook Directory")
         if dir_path:
             self.dirInput.setText(dir_path)
 
     def run_bake(self):
+        """Start the metadata baking process."""
         path = self.dirInput.text().strip()
         self.logOutput.clear()
 
@@ -249,7 +266,7 @@ class MetadataBakerApp(QtWidgets.QWidget):
         self.thread.start()
 
     def update_status(self, message, progress):
-        # Only display non-error messages here
+        """Update log output with status message."""
         if not message.startswith("ERROR"):
             # Convert newlines to HTML line breaks for GUI
             if "\n" in message:
@@ -258,12 +275,13 @@ class MetadataBakerApp(QtWidgets.QWidget):
         self.progressBar.setValue(progress)
 
     def report_error(self, error_message):
-        # Ensure error messages are properly formatted for GUI
+        """Display error message in the log output."""
         if "\n" in error_message:
             error_message = error_message.replace("\n", "<br>")
         self.logOutput.append(f"<span style='color:red;'>{error_message}</span>")
 
     def process_finished(self):
+        """Handle completion of the baking process."""
         self.logOutput.append("Processing complete.")
         self.runBtn.setEnabled(True)
         self.browseBtn.setEnabled(True)
@@ -271,6 +289,7 @@ class MetadataBakerApp(QtWidgets.QWidget):
 # -------- MAIN ENTRY POINT --------
 
 def main():
+    """Entry point for bakeMetadata CLI and GUI."""
     parser = argparse.ArgumentParser(description="Bake audiobook metadata.")
     parser.add_argument("directory", nargs="?", default=None, help="Path to audiobook directory")
     parser.add_argument("--gui", action="store_true", help="Run in GUI mode")
@@ -287,7 +306,7 @@ def main():
         if args.directory:
             window.dirInput.setText(args.directory)
 
-        def gui_log_callback(message, progress=0):
+        def gui_log_callback(message, _progress=0):
             # Only display non-error messages here
             if not message.startswith("ERROR"):
                 QtCore.QMetaObject.invokeMethod(
@@ -297,7 +316,7 @@ def main():
                     QtCore.Q_ARG(str, message)
                 )
 
-        gui_handler = GuiLogHandler(lambda msg: gui_log_callback(msg))
+        gui_handler = GuiLogHandler(gui_log_callback)
         gui_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
         gui_handler.setLevel(logging.WARNING)
         eyed3.log.addHandler(gui_handler)

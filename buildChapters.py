@@ -1,3 +1,5 @@
+"""Build chapter metadata from Libby audiobook metadata.json files."""
+
 from dataclasses import dataclass
 from datetime import timedelta
 import json
@@ -8,6 +10,8 @@ from typing import Any, List
 
 @dataclass(frozen=True)
 class Chapter:
+    """A single chapter in an audiobook."""
+
     title: str
     "The title of the chapter"
 
@@ -17,6 +21,8 @@ class Chapter:
 
 @dataclass(frozen=True)
 class Metadata:
+    """Audiobook metadata including title, author, narrator, and chapters."""
+
     title: str
     "The title of the audiobook"
 
@@ -32,6 +38,7 @@ class Metadata:
     chapters: List[Chapter]
     "A list of all the chapters in the audiobook"
 
+    @staticmethod
     def from_json(metadata: Any) -> 'Metadata':
         """Extracts a list of chapters from raw Libby metadata
 
@@ -64,7 +71,7 @@ class Metadata:
             creator["role"]: creator["name"]
             for creator in metadata["creator"]
         }
-        
+
         author = contributors.get("author")
         narrator = contributors.get("narrator")
 
@@ -110,9 +117,9 @@ def metadata_to_chapters_txt(metadata: Metadata) -> str:
 ffmetadata_special_characters = re.compile(r"(=|;|#|\\|\n)")
 
 
-def escape_for_ffmetadata(input: str) -> str:
+def escape_for_ffmetadata(value: str) -> str:
     "Return a string escaped for use in an ffmetadata file"
-    return ffmetadata_special_characters.sub(r"\\\1", input)
+    return ffmetadata_special_characters.sub(r"\\\1", value)
 
 
 def metadata_to_ffmpeg(metadata: Metadata) -> str:
@@ -145,17 +152,17 @@ def metadata_to_ffmpeg(metadata: Metadata) -> str:
 
 if __name__ == "__main__":
     if len(sys.argv) == 1 or sys.argv[1] == "--chapters":
-        format = metadata_to_chapters_txt
+        formatter = metadata_to_chapters_txt
     elif sys.argv[1] == "--ffmpeg":
-        format = metadata_to_ffmpeg
+        formatter = metadata_to_ffmpeg
     else:
         print(
             f"Usage: {sys.argv[0]} [--chapters | --ffmpeg]"
             " < metadata.json > chapters.txt"
         )
-        exit(1)
+        sys.exit(1)
 
-    raw_metadata = json.load(sys.stdin)
-    metadata = Metadata.from_json(raw_metadata)
+    raw_data = json.load(sys.stdin)
+    parsed = Metadata.from_json(raw_data)
 
-    print(format(metadata))
+    print(formatter(parsed))

@@ -1,0 +1,24 @@
+[MAIN]
+extension-pkg-allow-list=PyQt5
+
+[MESSAGES CONTROL]
+disable=
+    # camelCase Qt widget attributes are idiomatic
+    invalid-name,
+    # GUI classes naturally have many attributes/args
+    too-many-instance-attributes,
+    too-many-arguments,
+    too-many-positional-arguments,
+    too-few-public-methods,
+    # Complex conversion functions need many locals/branches/statements
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    # Module names are established and renaming would break imports
+    # (bakeMetadata, buildChapters, convertToM4b)
+    # handled by invalid-name disable above
+    # Intentional broad exception in worker threads
+    broad-exception-caught,
+
+[FORMAT]
+max-line-length=120

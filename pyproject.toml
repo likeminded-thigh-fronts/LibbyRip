@@ -18,3 +18,8 @@ build = ["pyinstaller"]
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pylint>=4.0.5",
+]

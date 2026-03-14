@@ -11,22 +11,30 @@ from easym4b import (
     run_conversion,
     validate_input_directory,
     extract_zip_to_temp,
+    resolve_ffmpeg,
+    save_ffmpeg_path,
+    _is_valid_ffmpeg,
 )
 
 
 class ConversionWorker(QtCore.QObject):
+    """Worker to run audiobook conversion in a separate thread."""
+
     progress = QtCore.pyqtSignal(str)
     finished = QtCore.pyqtSignal(object)  # emits output Path or None
     error = QtCore.pyqtSignal(str)
 
-    def __init__(self, input_path, output_dir, author_dir=False, temp_dir=None):
+    def __init__(self, input_path, output_dir, author_dir=False,
+                 temp_dir=None, ffmpeg_path="ffmpeg"):
         super().__init__()
         self.input_path = input_path
         self.output_dir = output_dir
         self.author_dir = author_dir
         self.temp_dir = temp_dir
+        self.ffmpeg_path = ffmpeg_path
 
     def run(self):
+        """Execute the conversion process."""
         try:
             result = run_conversion(
                 input_path=self.input_path,
@@ -34,6 +42,7 @@ class ConversionWorker(QtCore.QObject):
                 author_dir=self.author_dir,
                 overwrite=True,
                 progress_callback=self.progress.emit,
+                ffmpeg_path=self.ffmpeg_path,
             )
             self.finished.emit(result)
         except Exception as e:
@@ -46,15 +55,20 @@ class ConversionWorker(QtCore.QObject):
 
 
 class EasyM4BApp(QtWidgets.QWidget):
+    """Main GUI application for converting Libby audiobooks to M4B."""
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("easym4b - Libby to M4B Converter")
         self.resize(650, 450)
         self._thread = None
         self._worker = None
+        self._ffmpeg_path = None
         self.init_ui()
+        self._check_ffmpeg()
 
     def init_ui(self):
+        """Initialize the user interface."""
         layout = QtWidgets.QVBoxLayout()
 
         # Input selection
@@ -80,6 +94,22 @@ class EasyM4BApp(QtWidgets.QWidget):
         # Author dir checkbox
         self.authorDirCheck = QtWidgets.QCheckBox("Create author subdirectory")
 
+        # FFmpeg path (shown only when not auto-detected)
+        self.ffmpegLabel = QtWidgets.QLabel("FFmpeg binary:")
+        ffmpeg_layout = QtWidgets.QHBoxLayout()
+        self.ffmpegField = QtWidgets.QLineEdit()
+        self.ffmpegField.setPlaceholderText("Path to ffmpeg binary...")
+        self.browseFfmpegBtn = QtWidgets.QPushButton("Browse...")
+        ffmpeg_layout.addWidget(self.ffmpegField, 1)
+        ffmpeg_layout.addWidget(self.browseFfmpegBtn)
+        self.ffmpegContainer = QtWidgets.QWidget()
+        ffmpeg_container_layout = QtWidgets.QVBoxLayout()
+        ffmpeg_container_layout.setContentsMargins(0, 0, 0, 0)
+        ffmpeg_container_layout.addWidget(self.ffmpegLabel)
+        ffmpeg_container_layout.addLayout(ffmpeg_layout)
+        self.ffmpegContainer.setLayout(ffmpeg_container_layout)
+        self.ffmpegContainer.setVisible(False)
+
         # Convert button
         self.convertBtn = QtWidgets.QPushButton("Convert to M4B")
         self.convertBtn.setMinimumHeight(40)
@@ -95,6 +125,8 @@ class EasyM4BApp(QtWidgets.QWidget):
         layout.addLayout(output_layout)
         layout.addWidget(self.authorDirCheck)
         layout.addSpacing(8)
+        layout.addWidget(self.ffmpegContainer)
+        layout.addSpacing(8)
         layout.addWidget(self.convertBtn)
         layout.addWidget(self.logOutput, 1)
         self.setLayout(layout)
@@ -104,8 +136,11 @@ class EasyM4BApp(QtWidgets.QWidget):
         self.browseZipBtn.clicked.connect(self.select_zip_file)
         self.browseOutputBtn.clicked.connect(self.select_output_dir)
         self.convertBtn.clicked.connect(self.start_conversion)
+        self.browseFfmpegBtn.clicked.connect(self.select_ffmpeg)
+        self.ffmpegField.editingFinished.connect(self._on_ffmpeg_field_changed)
 
     def select_input_dir(self):
+        """Open directory picker for input audiobook."""
         dir_path = QtWidgets.QFileDialog.getExistingDirectory(
             self, "Select Audiobook Directory"
         )
@@ -113,6 +148,7 @@ class EasyM4BApp(QtWidgets.QWidget):
             self.inputField.setText(dir_path)
 
     def select_zip_file(self):
+        """Open file picker for zip input."""
         file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Select Audiobook Zip File", "", "Zip Files (*.zip)"
         )
@@ -120,13 +156,58 @@ class EasyM4BApp(QtWidgets.QWidget):
             self.inputField.setText(file_path)
 
     def select_output_dir(self):
+        """Open directory picker for output location."""
         dir_path = QtWidgets.QFileDialog.getExistingDirectory(
             self, "Select Output Directory"
         )
         if dir_path:
             self.outputField.setText(dir_path)
 
+    def _check_ffmpeg(self):
+        """Check for ffmpeg on startup."""
+        path = resolve_ffmpeg()
+        if path:
+            self._ffmpeg_path = path
+            self.ffmpegContainer.setVisible(False)
+            self.convertBtn.setEnabled(True)
+        else:
+            self._ffmpeg_path = None
+            self.ffmpegContainer.setVisible(True)
+            self.convertBtn.setEnabled(False)
+            self.logOutput.append(
+                "<span style='color:orange;'>FFmpeg not found in PATH. "
+                "Please set the path to ffmpeg below.</span>"
+            )
+
+    def select_ffmpeg(self):
+        """Open file picker for ffmpeg binary."""
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Select FFmpeg Binary"
+        )
+        if file_path:
+            self.ffmpegField.setText(file_path)
+            self._validate_and_save_ffmpeg(file_path)
+
+    def _on_ffmpeg_field_changed(self):
+        path = self.ffmpegField.text().strip()
+        if path:
+            self._validate_and_save_ffmpeg(path)
+
+    def _validate_and_save_ffmpeg(self, path):
+        if _is_valid_ffmpeg(path):
+            self._ffmpeg_path = path
+            save_ffmpeg_path(path)
+            self.convertBtn.setEnabled(True)
+            self.logOutput.append(f"FFmpeg found: {path}")
+        else:
+            self._ffmpeg_path = None
+            self.convertBtn.setEnabled(False)
+            self.logOutput.append(
+                f"<span style='color:red;'>Invalid ffmpeg path: {path}</span>"
+            )
+
     def set_controls_enabled(self, enabled):
+        """Enable or disable all input controls."""
         self.convertBtn.setEnabled(enabled)
         self.browseDirBtn.setEnabled(enabled)
         self.browseZipBtn.setEnabled(enabled)
@@ -136,9 +217,12 @@ class EasyM4BApp(QtWidgets.QWidget):
         self.authorDirCheck.setEnabled(enabled)
 
     def start_conversion(self):
+        """Validate inputs and launch the conversion worker thread."""
         input_text = self.inputField.text().strip()
         if not input_text:
-            self.logOutput.append("<span style='color:red;'>Please select an input directory or zip file.</span>")
+            self.logOutput.append(
+                "<span style='color:red;'>Please select an input directory or zip file.</span>"
+            )
             return
 
         input_path = Path(input_text)
@@ -183,6 +267,7 @@ class EasyM4BApp(QtWidgets.QWidget):
             output_dir=output_dir,
             author_dir=self.authorDirCheck.isChecked(),
             temp_dir=temp_dir,
+            ffmpeg_path=self._ffmpeg_path,
         )
         self._worker.moveToThread(self._thread)
         self._thread.started.connect(self._worker.run)
@@ -195,18 +280,22 @@ class EasyM4BApp(QtWidgets.QWidget):
         self._thread.start()
 
     def on_progress(self, message):
+        """Append progress message to the log output."""
         self.logOutput.append(message)
 
     def on_error(self, error_message):
+        """Display error message in the log output."""
         self.logOutput.append(f"<span style='color:red;'>Error: {error_message}</span>")
 
     def on_finished(self, result):
+        """Handle conversion completion."""
         if result:
-            self.logOutput.append(f"\nDone!")
+            self.logOutput.append("\nDone!")
         self.set_controls_enabled(True)
 
 
 def main():
+    """Entry point for the easym4b GUI."""
     app = QtWidgets.QApplication(sys.argv)
     window = EasyM4BApp()
     window.show()
