@@ -14,6 +14,7 @@ Examples:
 
 import sys
 import json
+import os
 import subprocess
 import argparse
 import shutil
@@ -24,6 +25,16 @@ from pathlib import Path
 import tempfile
 
 from buildChapters import Metadata, metadata_to_ffmpeg
+
+SETTINGS_DIR = Path.home() / ".config" / "easym4b"
+SETTINGS_FILE = SETTINGS_DIR / "settings.json"
+
+# Common ffmpeg install locations on macOS
+_FFMPEG_SEARCH_PATHS = [
+    "/opt/homebrew/bin/ffmpeg",      # Apple Silicon Homebrew
+    "/usr/local/bin/ffmpeg",         # Intel Homebrew
+    "/opt/local/bin/ffmpeg",         # MacPorts
+]
 
 
 def is_xcode_installed():
@@ -37,11 +48,89 @@ def is_xcode_installed():
         return False
 
 
-def check_dependencies(log_file=None):
+def _load_settings():
+    """Load settings from config file."""
+    try:
+        return json.loads(SETTINGS_FILE.read_text())
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def _save_settings(settings):
+    """Save settings to config file."""
+    SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(settings, indent=2))
+
+
+def save_ffmpeg_path(path):
+    """Save ffmpeg path to persistent config."""
+    settings = _load_settings()
+    settings["ffmpeg_path"] = str(path)
+    _save_settings(settings)
+
+
+def load_ffmpeg_path():
+    """Load saved ffmpeg path from config, or None."""
+    return _load_settings().get("ffmpeg_path")
+
+
+def _is_valid_ffmpeg(path):
+    """Check if a path points to a working ffmpeg binary."""
+    try:
+        subprocess.run(
+            (str(path), "-version"),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except (FileNotFoundError, PermissionError, OSError):
+        return False
+
+
+def find_ffmpeg():
+    """Search for ffmpeg in PATH and common install locations.
+
+    Returns the full path as a string, or None if not found.
+    """
+    which_result = shutil.which("ffmpeg")
+    if which_result:
+        return which_result
+
+    for path in _FFMPEG_SEARCH_PATHS:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+
+    return None
+
+
+def resolve_ffmpeg():
+    """Resolve ffmpeg path, checking saved config first, then auto-detecting.
+
+    Returns the full path as a string, or None if not found.
+    """
+    saved = load_ffmpeg_path()
+    if saved and _is_valid_ffmpeg(saved):
+        return saved
+
+    # Clear invalid saved path
+    if saved:
+        settings = _load_settings()
+        settings.pop("ffmpeg_path", None)
+        _save_settings(settings)
+
+    found = find_ffmpeg()
+    if found:
+        save_ffmpeg_path(found)
+        return found
+
+    return None
+
+
+def check_dependencies(ffmpeg_path="ffmpeg", log_file=None):
     """Check if ffmpeg is installed"""
     try:
         subprocess.run(
-            ("ffmpeg", "-version"),
+            (ffmpeg_path, "-version"),
             stdout=log_file if log_file else subprocess.DEVNULL,
             stderr=log_file if log_file else subprocess.DEVNULL,
         )
@@ -160,6 +249,7 @@ def run_conversion(
     log_dir=None,
     overwrite=False,
     progress_callback=None,
+    ffmpeg_path="ffmpeg",
 ):
     """Run the full conversion pipeline.
 
@@ -172,6 +262,7 @@ def run_conversion(
         log_dir: Override log file directory
         overwrite: If True, overwrite existing output without prompting
         progress_callback: Optional callable(message: str)
+        ffmpeg_path: Path to ffmpeg binary (defaults to "ffmpeg")
 
     Returns:
         Path to the output .m4b file
@@ -189,7 +280,7 @@ def run_conversion(
     emit(f"Found {len(mp3_files)} MP3 files")
 
     # Check dependencies
-    check_dependencies()
+    check_dependencies(ffmpeg_path)
 
     # Get metadata file
     metadata_file = input_path / "metadata" / "metadata.json"
@@ -245,7 +336,7 @@ def run_conversion(
 
         result = subprocess.run(
             [
-                "ffmpeg", "-y",
+                ffmpeg_path, "-y",
                 "-f", "concat",
                 "-safe", "0",
                 "-i", str(concat_file),
@@ -286,7 +377,7 @@ def run_conversion(
 
         # Build FFmpeg command
         ffmpeg_cmd = [
-            "ffmpeg", "-y",
+            ffmpeg_path, "-y",
             "-i", str(combined_file),
             "-i", str(chapters_metadata_file),
         ]
@@ -387,6 +478,11 @@ Examples:
     print("LibbyRip - Libby to M4B Converter")
     print("=" * 50)
 
+    ffmpeg_path = resolve_ffmpeg()
+    if not ffmpeg_path:
+        print("\nError: FFmpeg not found. Please install it from https://www.ffmpeg.org/download.html")
+        sys.exit(1)
+
     input_arg = Path(args.input)
     temp_dir = None
 
@@ -438,6 +534,7 @@ Examples:
             author_dir=args.output_author_dir,
             keep_temp=args.keep_temp,
             overwrite=True,  # Already prompted above
+            ffmpeg_path=ffmpeg_path,
         )
 
     except (FileNotFoundError, RuntimeError, FileExistsError) as e:
