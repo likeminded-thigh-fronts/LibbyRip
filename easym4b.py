@@ -38,6 +38,7 @@ _FFMPEG_SEARCH_PATHS = [
 
 
 def is_xcode_installed():
+    """Check if Xcode command line tools are installed."""
     try:
         subprocess.run(['xcode-select', '-p'],
                         capture_output=True,
@@ -81,6 +82,7 @@ def _is_valid_ffmpeg(path):
             (str(path), "-version"),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            check=False,
         )
         return True
     except (FileNotFoundError, PermissionError, OSError):
@@ -133,11 +135,12 @@ def check_dependencies(ffmpeg_path="ffmpeg", log_file=None):
             (ffmpeg_path, "-version"),
             stdout=log_file if log_file else subprocess.DEVNULL,
             stderr=log_file if log_file else subprocess.DEVNULL,
+            check=False,
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         raise RuntimeError(
             "FFmpeg not found. Please install it from https://www.ffmpeg.org/download.html"
-        )
+        ) from exc
 
 
 def validate_input_directory(directory):
@@ -162,7 +165,7 @@ def validate_input_directory(directory):
 
 def get_audiobook_title(metadata_file):
     """Extract title from metadata.json"""
-    with open(metadata_file, "r") as f:
+    with open(metadata_file, "r", encoding="utf-8") as f:
         metadata = json.load(f)
     return metadata.get("title", "Audiobook")
 
@@ -173,7 +176,7 @@ def get_audiobook_author(metadata_file):
     Looks for the first creator with role == "author", falling back to
     "author and narrator" combined role.
     """
-    with open(metadata_file, "r") as f:
+    with open(metadata_file, "r", encoding="utf-8") as f:
         metadata = json.load(f)
 
     for creator in metadata.get("creator", []):
@@ -325,13 +328,13 @@ def run_conversion(
     emit(f"Output file: {output_file}")
     emit(f"Log file: {log_file_path}")
 
-    with open(log_file_path, "w") as log_file:
+    with open(log_file_path, "w", encoding="utf-8") as log_file:
         # Step 1: Combine MP3 files
         emit("Combining MP3 files...")
         combined_file = input_path / "combined.mp3"
         concat_file = input_path / "concat.txt"
 
-        with open(concat_file, "w") as f:
+        with open(concat_file, "w", encoding="utf-8") as f:
             f.write(create_concat_file(input_path))
 
         result = subprocess.run(
@@ -346,6 +349,7 @@ def run_conversion(
             stdout=log_file,
             stderr=log_file,
             text=True,
+            check=False,
         )
 
         if result.returncode != 0:
@@ -357,13 +361,13 @@ def run_conversion(
         emit("Converting to M4B format with chapters...")
 
         # Build chapter metadata using direct import
-        with open(metadata_file, "r") as f:
+        with open(metadata_file, "r", encoding="utf-8") as f:
             raw_metadata = json.load(f)
         metadata = Metadata.from_json(raw_metadata)
         chapters_content = metadata_to_ffmpeg(metadata)
 
         chapters_metadata_file = input_path / "chapters.ffmetadata"
-        with open(chapters_metadata_file, "w") as f:
+        with open(chapters_metadata_file, "w", encoding="utf-8") as f:
             f.write(chapters_content)
 
         # Check for cover art
@@ -411,6 +415,7 @@ def run_conversion(
             stdout=log_file,
             stderr=log_file,
             text=True,
+            check=False,
         )
 
         if result.returncode != 0:
@@ -440,6 +445,7 @@ def run_conversion(
 
 
 def main():
+    """CLI entry point for easym4b."""
     parser = argparse.ArgumentParser(
         description="Convert Libby audiobook downloads to M4B format with chapters",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -480,7 +486,10 @@ Examples:
 
     ffmpeg_path = resolve_ffmpeg()
     if not ffmpeg_path:
-        print("\nError: FFmpeg not found. Please install it from https://www.ffmpeg.org/download.html")
+        print(
+            "\nError: FFmpeg not found. Please install it from "
+            "https://www.ffmpeg.org/download.html"
+        )
         sys.exit(1)
 
     input_arg = Path(args.input)
