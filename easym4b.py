@@ -3,33 +3,39 @@
 LibbyRip - Convert Libby audiobook downloads to M4B format with chapters
 
 Usage:
-    easym4b.py <input_directory> [--output-name FILENAME]
+    easym4b.py <input_directory_or_zip> [--output-dir DIR] [--output-author-dir]
     easym4b.py --help
 
 Examples:
     easym4b.py "$HOME/Downloads/My Book"
-    easym4b.py "$HOME/Downloads/My Book" --output-name "MyBook"
+    easym4b.py "$HOME/Downloads/My Book.zip" --output-dir /tmp
+    easym4b.py "$HOME/Downloads/My Book" --output-dir /tmp --output-author-dir
 """
 
-import os
 import sys
 import json
 import subprocess
 import argparse
+import shutil
+import zipfile
+import re
+from datetime import datetime
 from pathlib import Path
 import tempfile
+
+from buildChapters import Metadata, metadata_to_ffmpeg
 
 
 def is_xcode_installed():
     try:
-        # Run command to get active developer directory
-        result = subprocess.run(['xcode-select', '-p'],
-                                capture_output=True,
-                                text=True,
-                                check=True)
+        subprocess.run(['xcode-select', '-p'],
+                        capture_output=True,
+                        text=True,
+                        check=True)
         return True
     except subprocess.CalledProcessError:
         return False
+
 
 def check_dependencies(log_file=None):
     """Check if ffmpeg is installed"""
@@ -40,10 +46,9 @@ def check_dependencies(log_file=None):
             stderr=log_file if log_file else subprocess.DEVNULL,
         )
     except FileNotFoundError:
-        print(
-            "Error: FFmpeg not found. Please install it from https://www.ffmpeg.org/download.html"
+        raise RuntimeError(
+            "FFmpeg not found. Please install it from https://www.ffmpeg.org/download.html"
         )
-        sys.exit(1)
 
 
 def validate_input_directory(directory):
@@ -51,23 +56,17 @@ def validate_input_directory(directory):
     input_path = Path(directory)
 
     if not input_path.exists():
-        print(f"Error: Directory not found: {directory}")
-        sys.exit(1)
+        raise FileNotFoundError(f"Directory not found: {directory}")
 
     # Check for metadata.json
     metadata_file = input_path / "metadata" / "metadata.json"
     if not metadata_file.exists():
-        print(f"Error: metadata/metadata.json not found in {directory}")
-        sys.exit(1)
+        raise FileNotFoundError(f"metadata/metadata.json not found in {directory}")
 
     # Check for MP3 files
     mp3_files = list(input_path.glob("Part *.mp3"))
     if not mp3_files:
-        print(f"Error: No MP3 files (Part *.mp3) found in {directory}")
-        sys.exit(1)
-
-    print(f"✓ Found {len(mp3_files)} MP3 files")
-    print(f"✓ Found metadata.json")
+        raise FileNotFoundError(f"No MP3 files (Part *.mp3) found in {directory}")
 
     return input_path
 
@@ -79,199 +78,274 @@ def get_audiobook_title(metadata_file):
     return metadata.get("title", "Audiobook")
 
 
-def extract_chapters(metadata_file, script_dir):
-    """Extract chapter metadata using buildChapters.py"""
-    print("Extracting chapter metadata...")
+def get_audiobook_author(metadata_file):
+    """Extract author name from metadata.json.
 
-    build_chapters_script = script_dir / "buildChapters.py"
-
+    Looks for the first creator with role == "author", falling back to
+    "author and narrator" combined role.
+    """
     with open(metadata_file, "r") as f:
-        metadata_json = f.read()
+        metadata = json.load(f)
 
-    result = subprocess.run(
-        ["python3", str(build_chapters_script), "--ffmpeg"],
-        input=metadata_json,
-        capture_output=True,
-        text=True,
-    )
+    for creator in metadata.get("creator", []):
+        if creator.get("role") == "author":
+            return creator["name"]
 
-    if result.returncode != 0:
-        print(f"Error extracting chapters: {result.stderr}")
-        sys.exit(1)
+    # Fallback: check for combined "author and narrator" role
+    for creator in metadata.get("creator", []):
+        if "author" in creator.get("role", ""):
+            return creator["name"]
 
-    return result.stdout
+    return None
+
+
+def sanitize_filename(name):
+    """Sanitize a string for use as a filename/directory name."""
+    # Replace characters that are problematic on macOS/Windows filesystems
+    return re.sub(r'[/:*?"<>|\\]', '_', name).strip()
+
+
+def extract_zip_to_temp(zip_path):
+    """Extract a zip file to a temporary directory.
+
+    Returns the path to the extracted contents. If the zip contains a single
+    top-level directory, returns that directory.
+    """
+    temp_dir = Path(tempfile.mkdtemp(prefix="easym4b_"))
+
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        zf.extractall(temp_dir)
+
+    # Check if zip contained a single top-level directory
+    contents = list(temp_dir.iterdir())
+    if len(contents) == 1 and contents[0].is_dir():
+        return contents[0], temp_dir
+    return temp_dir, temp_dir
 
 
 def create_concat_file(input_path):
-    """Create FFmpeg concat file for combining MP3s"""
-    print("Creating concat file for MP3 parts...")
-
+    """Create FFmpeg concat file content for combining MP3s"""
     mp3_files = sorted(input_path.glob("Part *.mp3"))
-
-    concat_content = "\n".join(f"file '{f.name}'" for f in mp3_files)
-
-    return concat_content
+    return "\n".join(f"file '{f.name}'" for f in mp3_files)
 
 
-def combine_mp3_files(input_path, concat_file_path, log_file=None):
-    """Combine multiple MP3 files into one"""
-    print("Combining MP3 files...")
-
-    combined_file = input_path / "combined.mp3"
-
-    # Write concat file
-    with open(concat_file_path, "w") as f:
-        f.write(create_concat_file(input_path))
-
-    # Run FFmpeg
-    result = subprocess.run(
-        [
-            "ffmpeg",
-            "-f",
-            "concat",
-            "-safe",
-            "0",
-            "-i",
-            str(concat_file_path),
-            "-c",
-            "copy",
-            str(combined_file),
-        ],
-        stdout=log_file if log_file else subprocess.DEVNULL,
-        stderr=log_file if log_file else subprocess.PIPE,
-        text=True,
-    )
-
-    if result.returncode != 0:
-        print(f"Error combining MP3 files: {result.stderr}")
-        sys.exit(1)
-
-    print(f"✓ Combined MP3 created: {combined_file.name}")
-    return combined_file
+def get_log_dir():
+    """Get log directory for standalone app (PyInstaller)."""
+    if getattr(sys, 'frozen', False):
+        log_dir = Path.home() / "Library" / "Logs" / "easym4b"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        return log_dir
+    return None
 
 
-def convert_to_m4b(combined_mp3, metadata_file, output_file, log_file=None):
-    """Convert combined MP3 to M4B with chapters"""
-    print("Converting to M4B format with chapters...")
+def resolve_log_path(output_dir):
+    """Determine log file path, avoiding overwrites."""
+    frozen_log_dir = get_log_dir()
+    log_dir = frozen_log_dir if frozen_log_dir else output_dir
 
-    # Create chapters metadata file
-    chapters_metadata_file = combined_mp3.parent / "chapters.ffmetadata"
+    log_file_path = log_dir / "conversion.log"
+    if log_file_path.exists():
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_file_path = log_dir / f"conversion_{timestamp}.log"
 
-    # Extract chapters
-    build_chapters_script = Path(__file__).parent / "buildChapters.py"
+    return log_file_path
 
-    with open(metadata_file, "r") as f:
-        metadata_json = f.read()
 
-    result = subprocess.run(
-        ["python3", str(build_chapters_script), "--ffmpeg"],
-        input=metadata_json,
-        capture_output=True,
-        text=True,
-    )
+def run_conversion(
+    input_path,
+    output_dir=None,
+    output_name=None,
+    author_dir=False,
+    keep_temp=False,
+    log_dir=None,
+    overwrite=False,
+    progress_callback=None,
+):
+    """Run the full conversion pipeline.
 
-    if result.returncode != 0:
-        print(f"Error extracting chapters: {result.stderr}")
-        sys.exit(1)
+    Args:
+        input_path: Path to directory containing Libby audiobook files
+        output_dir: Where to write the .m4b (defaults to input_path)
+        output_name: Output filename without extension (defaults to title)
+        author_dir: If True, create author subdirectory inside output_dir
+        keep_temp: If True, keep intermediate files
+        log_dir: Override log file directory
+        overwrite: If True, overwrite existing output without prompting
+        progress_callback: Optional callable(message: str)
 
-    with open(chapters_metadata_file, "w") as f:
-        f.write(result.stdout)
+    Returns:
+        Path to the output .m4b file
+    """
+    input_path = Path(input_path)
 
-    # Check for cover art
-    cover_file = combined_mp3.parent / "metadata" / "cover.jpg"
+    def emit(msg):
+        if progress_callback:
+            progress_callback(msg)
+        else:
+            print(msg)
 
-    # Build FFmpeg command
-    ffmpeg_cmd = [
-        "ffmpeg",
-        "-i",
-        str(combined_mp3),
-        "-i",
-        str(chapters_metadata_file),
-    ]
+    # Validate
+    mp3_files = list(input_path.glob("Part *.mp3"))
+    emit(f"Found {len(mp3_files)} MP3 files")
 
-    #Select Audio Codec
-    if sys.platform.startswith('darwin') and is_xcode_installed():
-        CODEC = "aac_at"  # Use Apple AAC codec on macOS, requires Xcode Audio Toolbox(default on Xcode installations)
+    # Check dependencies
+    check_dependencies()
+
+    # Get metadata file
+    metadata_file = input_path / "metadata" / "metadata.json"
+
+    # Determine output filename
+    if output_name:
+        output_filename = output_name
     else:
-        CODEC = "aac"     # Use standard AAC codec on other platforms
-    # TODO: Support flag to choose Fraunhofer FDK AAC aka: libfdk_aac. Look into supporting VBR if using Fraunhofer.
-    # TODO: Support flag for bitrate selection. For now 64k CBR is fine for audiobooks.
+        output_filename = get_audiobook_title(metadata_file)
 
-    # Add cover art if it exists
-    if cover_file.exists():
-        print("✓ Found cover art")
-        ffmpeg_cmd.extend(["-i", str(cover_file)])
-        # Map audio, metadata, chapters, and cover
-        ffmpeg_cmd.extend([
-            "-c:a",
-            CODEC,
-            "-b:a",
-            "64k",
-            "-c:v",
-            "copy",
-            "-disposition:v:0",
-            "attached_pic",
-            "-map",
-            "0:a",
-            "-map",
-            "2:v",
-            "-map_metadata",
-            "1",
-            "-map_chapters",
-            "1",
-        ])
+    # Resolve output directory
+    if output_dir is None:
+        output_dir = input_path
     else:
-        print("⚠ Cover art not found, skipping")
-        # Map audio, metadata, and chapters only
-        ffmpeg_cmd.extend([
-            "-c:a",
-            CODEC,
-            "-b:a",
-            "64k",
-            "-map_metadata",
-            "1",
-            "-map_chapters",
-            "1",
-        ])
+        output_dir = Path(output_dir)
 
-    ffmpeg_cmd.append(str(output_file))
+    # Author subdirectory
+    if author_dir:
+        author_name = get_audiobook_author(metadata_file)
+        if author_name:
+            safe_author = sanitize_filename(author_name)
+            output_dir = output_dir / safe_author
+            emit(f"Author directory: {safe_author}")
+        else:
+            emit("Warning: No author found in metadata, skipping author directory")
 
-    # Convert to M4B with chapters
-    result = subprocess.run(
-        ffmpeg_cmd,
-        stdout=log_file if log_file else subprocess.DEVNULL,
-        stderr=log_file if log_file else subprocess.PIPE,
-        text=True,
-    )
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    if result.returncode != 0:
-        print(f"Error converting to M4B: {result.stderr}")
-        sys.exit(1)
+    output_file = output_dir / f"{output_filename}.m4b"
 
-    print(f"✓ M4B created: {output_file.name}")
+    # Check if output file already exists
+    if output_file.exists() and not overwrite:
+        raise FileExistsError(f"{output_file} already exists. Use overwrite=True to replace.")
 
+    # Resolve log path
+    if log_dir:
+        log_file_path = resolve_log_path(Path(log_dir))
+    else:
+        log_file_path = resolve_log_path(output_dir)
 
-def cleanup(input_path):
-    """Clean up temporary files"""
-    print("Cleaning up temporary files...")
+    emit(f"Input directory: {input_path}")
+    emit(f"Output file: {output_file}")
+    emit(f"Log file: {log_file_path}")
 
-    files_to_remove = ["combined.mp3", "concat.txt", "chapters.ffmetadata"]
+    with open(log_file_path, "w") as log_file:
+        # Step 1: Combine MP3 files
+        emit("Combining MP3 files...")
+        combined_file = input_path / "combined.mp3"
+        concat_file = input_path / "concat.txt"
 
-    for filename in files_to_remove:
-        file_path = input_path / filename
-        if file_path.exists():
-            file_path.unlink()
-            print(f"✓ Removed {filename}")
+        with open(concat_file, "w") as f:
+            f.write(create_concat_file(input_path))
 
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(concat_file),
+                "-c", "copy",
+                str(combined_file),
+            ],
+            stdout=log_file,
+            stderr=log_file,
+            text=True,
+        )
 
-def get_file_size(file_path):
-    """Get human-readable file size"""
-    size = file_path.stat().st_size
-    for unit in ["B", "KB", "MB", "GB"]:
-        if size < 1024:
-            return f"{size:.1f} {unit}"
-        size /= 1024
-    return f"{size:.1f} TB"
+        if result.returncode != 0:
+            raise RuntimeError("Error combining MP3 files. Check the log file for details.")
+
+        emit(f"Combined MP3 created: {combined_file.name}")
+
+        # Step 2: Convert to M4B with chapters
+        emit("Converting to M4B format with chapters...")
+
+        # Build chapter metadata using direct import
+        with open(metadata_file, "r") as f:
+            raw_metadata = json.load(f)
+        metadata = Metadata.from_json(raw_metadata)
+        chapters_content = metadata_to_ffmpeg(metadata)
+
+        chapters_metadata_file = input_path / "chapters.ffmetadata"
+        with open(chapters_metadata_file, "w") as f:
+            f.write(chapters_content)
+
+        # Check for cover art
+        cover_file = input_path / "metadata" / "cover.jpg"
+
+        # Select audio codec
+        if sys.platform.startswith('darwin') and is_xcode_installed():
+            CODEC = "aac_at"
+        else:
+            CODEC = "aac"
+
+        # Build FFmpeg command
+        ffmpeg_cmd = [
+            "ffmpeg", "-y",
+            "-i", str(combined_file),
+            "-i", str(chapters_metadata_file),
+        ]
+
+        if cover_file.exists():
+            emit("Found cover art")
+            ffmpeg_cmd.extend(["-i", str(cover_file)])
+            ffmpeg_cmd.extend([
+                "-c:a", CODEC,
+                "-b:a", "64k",
+                "-c:v", "copy",
+                "-disposition:v:0", "attached_pic",
+                "-map", "0:a",
+                "-map", "2:v",
+                "-map_metadata", "1",
+                "-map_chapters", "1",
+            ])
+        else:
+            emit("Cover art not found, skipping")
+            ffmpeg_cmd.extend([
+                "-c:a", CODEC,
+                "-b:a", "64k",
+                "-map_metadata", "1",
+                "-map_chapters", "1",
+            ])
+
+        ffmpeg_cmd.append(str(output_file))
+
+        result = subprocess.run(
+            ffmpeg_cmd,
+            stdout=log_file,
+            stderr=log_file,
+            text=True,
+        )
+
+        if result.returncode != 0:
+            raise RuntimeError("Error converting to M4B. Check the log file for details.")
+
+        # Show results
+        size = output_file.stat().st_size
+        for unit in ["B", "KB", "MB", "GB"]:
+            if size < 1024:
+                size_str = f"{size:.1f} {unit}"
+                break
+            size /= 1024
+        else:
+            size_str = f"{size:.1f} TB"
+
+        emit(f"Success! Output: {output_file}")
+        emit(f"File size: {size_str}")
+
+        # Cleanup temp files in input_path
+        if not keep_temp:
+            for filename in ["combined.mp3", "concat.txt", "chapters.ffmetadata"]:
+                file_path = input_path / filename
+                if file_path.exists():
+                    file_path.unlink()
+
+    return output_file
 
 
 def main():
@@ -280,17 +354,27 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  easym4b.py "$HOME/Downloads/My Book"
-  easym4b.py "$HOME/Downloads/My Book" --output-name "MyBook"
+  easym4b "$HOME/Downloads/My Book"
+  easym4b "$HOME/Downloads/My Book.zip" --output-dir /tmp
+  easym4b "$HOME/Downloads/My Book" --output-dir /tmp --output-author-dir
         """,
     )
 
     parser.add_argument(
-        "input_directory", help="Path to directory containing Libby audiobook files"
+        "input", help="Path to directory or .zip file containing Libby audiobook files"
     )
     parser.add_argument(
         "--output-name",
         help="Output filename (without extension). Defaults to audiobook title from metadata",
+    )
+    parser.add_argument(
+        "--output-dir",
+        help="Directory to write output M4B file to. Defaults to input directory",
+    )
+    parser.add_argument(
+        "--output-author-dir",
+        action="store_true",
+        help="Create author subdirectory inside output dir",
     )
     parser.add_argument(
         "--keep-temp",
@@ -303,69 +387,69 @@ Examples:
     print("LibbyRip - Libby to M4B Converter")
     print("=" * 50)
 
-    # Check dependencies
-    check_dependencies()
-
-    # Validate input directory
-    # TODO: Add support for passing zip files directly, extracting them to temp dirs, validating contents and cleaning up after.
-    input_path = validate_input_directory(args.input_directory)
-
-    # Get script directory
-    script_dir = Path(__file__).parent
-
-    # Get metadata file
-    metadata_file = input_path / "metadata" / "metadata.json"
-
-    # Determine output filename
-    if args.output_name:
-        output_filename = args.output_name
-    else:
-        output_filename = get_audiobook_title(metadata_file)
-
-    output_file = input_path / f"{output_filename}.m4b"
-
-    # Check if output file already exists
-    if output_file.exists():
-        response = (
-            input(f"\n{output_file.name} already exists. Overwrite? (y/n): ")
-            .strip()
-            .lower()
-        )
-        if response != "y":
-            print("Cancelled")
-            sys.exit(0)
+    input_arg = Path(args.input)
+    temp_dir = None
 
     try:
-        # Create log file
-        log_file_path = input_path / "conversion.log"
+        # Handle zip input
+        if input_arg.suffix.lower() == '.zip':
+            if not input_arg.exists():
+                print(f"Error: File not found: {input_arg}")
+                sys.exit(1)
+            print(f"Extracting zip file: {input_arg.name}")
+            extracted_path, temp_dir = extract_zip_to_temp(input_arg)
+            input_path = validate_input_directory(extracted_path)
 
-        # Run the conversion pipeline
-        print(f"\nInput directory: {input_path}")
-        print(f"Output file: {output_file.name}")
-        print(f"Log file: {log_file_path.name}\n")
+            # Default output_dir to cwd when using zip (can't write to temp dir)
+            if not args.output_dir:
+                args.output_dir = str(Path.cwd())
+        else:
+            input_path = validate_input_directory(input_arg)
 
-        with open(log_file_path, "w") as log_file:
-            # Step 1: Combine MP3 files
-            concat_file = input_path / "concat.txt"
-            combined_mp3 = combine_mp3_files(input_path, concat_file, log_file)
+        # Get metadata file for overwrite check
+        metadata_file = input_path / "metadata" / "metadata.json"
 
-            # Step 2: Convert to M4B with chapters
-            convert_to_m4b(combined_mp3, metadata_file, output_file, log_file)
+        # Determine output location for overwrite check
+        output_dir = Path(args.output_dir) if args.output_dir else input_path
+        output_name = args.output_name or get_audiobook_title(metadata_file)
 
-            # Show results
-            print(f"\n✓ Success!")
-            print(f"Output file: {output_file}")
-            print(f"File size: {get_file_size(output_file)}")
+        if args.output_author_dir:
+            author = get_audiobook_author(metadata_file)
+            if author:
+                output_dir = output_dir / sanitize_filename(author)
 
-            # Cleanup
-            if not args.keep_temp:
-                cleanup(input_path)
-            else:
-                print("\n(Keeping temporary files)")
+        output_file = output_dir / f"{output_name}.m4b"
 
+        if output_file.exists():
+            response = (
+                input(f"\n{output_file} already exists. Overwrite? (y/n): ")
+                .strip()
+                .lower()
+            )
+            if response != "y":
+                print("Cancelled")
+                sys.exit(0)
+
+        print()
+        run_conversion(
+            input_path=input_path,
+            output_dir=Path(args.output_dir) if args.output_dir else None,
+            output_name=args.output_name,
+            author_dir=args.output_author_dir,
+            keep_temp=args.keep_temp,
+            overwrite=True,  # Already prompted above
+        )
+
+    except (FileNotFoundError, RuntimeError, FileExistsError) as e:
+        print(f"\nError: {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"\nError: {e}")
         sys.exit(1)
+    finally:
+        if temp_dir is not None:
+            print("Cleaning up extracted zip contents...")
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
