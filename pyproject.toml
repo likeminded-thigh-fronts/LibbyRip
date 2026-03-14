@@ -1,0 +1,20 @@
+[project]
+name = "easym4b"
+version = "1.0.0"
+description = "Convert Libby audiobook downloads to M4B format with chapters"
+requires-python = ">=3.14"
+dependencies = [
+    "eyeD3",
+    "PyQt5",
+]
+
+[project.scripts]
+easym4b = "easym4b:main"
+easym4b-gui = "gui:main"
+
+[project.optional-dependencies]
+build = ["pyinstaller"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
