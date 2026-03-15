@@ -1,5 +1,7 @@
 .PHONY: help install clean all app
 
+UNAME_S := $(shell uname -s)
+
 help:
 	@echo "LibbyRip - Libby to M4B Converter"
 	@echo "=================================="
@@ -7,7 +9,7 @@ help:
 	@echo "Usage:"
 	@echo "  make install          - Install dependencies with uv"
 	@echo "  make clean            - Remove temporary files from downloads"
-	@echo "  make app              - Build standalone macOS application"
+	@echo "  make app              - Build standalone application"
 	@echo ""
 	@echo "Direct usage:"
 	@echo "  uv run easym4b <input_directory_or_zip>"
@@ -35,9 +37,15 @@ clean:
 	@echo "✓ Cleaned temporary files"
 
 app:
+ifeq ($(UNAME_S),Darwin)
 	@echo "Building standalone macOS application..."
 	uv run --extra build pyinstaller --name easym4b --windowed gui.py
 	@echo "✓ Built: dist/easym4b.app"
+else
+	@echo "Building standalone Windows application..."
+	uv run --extra build pyinstaller --name easym4b --windowed --onefile gui.py
+	@echo "✓ Built: dist/easym4b.exe"
+endif
 
 all: install
 	@echo "Setup complete!"

@@ -224,7 +224,13 @@ def create_concat_file(input_path):
 def get_log_dir():
     """Get log directory for standalone app (PyInstaller)."""
     if getattr(sys, 'frozen', False):
-        log_dir = Path.home() / "Library" / "Logs" / "easym4b"
+        if sys.platform == 'win32':
+            log_dir = Path(os.environ.get('LOCALAPPDATA',
+                                          str(Path.home()))) / "easym4b" / "Logs"
+        elif sys.platform == 'darwin':
+            log_dir = Path.home() / "Library" / "Logs" / "easym4b"
+        else:
+            log_dir = Path.home() / ".local" / "share" / "easym4b" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
         return log_dir
     return None
