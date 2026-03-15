@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            artifact: easym4b-macos
+          - os: windows-latest
+            artifact: easym4b-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Set up Python
+        run: uv python install 3.14
+      - name: Build application
+        run: make app
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: cd dist && zip -r ../easym4b-macos.zip easym4b.app
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cp dist/easym4b.exe easym4b-windows.exe
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            easym4b-macos.zip
+            easym4b-windows.exe
+          if-no-files-found: ignore
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            easym4b-macos/easym4b-macos.zip
+            easym4b-windows/easym4b-windows.exe
